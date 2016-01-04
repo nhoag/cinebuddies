@@ -4,10 +4,10 @@ set -a ; set -o errexit ; set -o nounset
 
 function usage() {
   cat <<EOF
-  Usage: ${0} "entity-1" "entity-2"
+  Usage: ${0} "entity-1" ["entity-2"]
   OPTIONS:
     -h        Show usage
-    -t        Specify entity type (person, production)
+    -t        Specify entity type (person, movie, tv)
 EOF
 exit
 }
@@ -36,6 +36,14 @@ fi
 TMDB_AUTH=$(cat "$HOME/.cinebuddies")
 TMDB_QUERY_1="${1// /+}"
 TMDB_QUERY_2="${2// /+}"
+
+QUERIES=0
+if [[ ! -z "${TMDB_QUERY_1}" ]]; then
+  ((QUERIES++))
+fi
+if [[ ! -z "${TMDB_QUERY_2}" ]]; then
+  ((QUERIES++))
+fi
 
 TIMESTAMP=$(date -j -u "+%s")
 CINEBUDDIES_TMP_DIR="${TMPDIR}${TIMESTAMP}"
@@ -97,9 +105,11 @@ function analyze_query_result() {
     entity_select "$(results_format "$1")"
   elif [[ $TOTAL_RESULTS -eq 0 ]]; then
     # exit because empty result
+    >&2 echo "Empty result for query"
     exit
   elif [[ -z $TOTAL_RESULTS ]]; then
     # exit because something weird happened
+    >&2 echo "There was a problem with the request"
     exit
   else
     ENTITY_INFO=$(results_format "$1")
@@ -115,15 +125,38 @@ function get_credits() {
     | sed 's/> /\'$'\n/g' | sort | uniq | grep -Ev '^$'
 }
 
-QUERY_ONE_RESULT=$(search_results "${TMDB_QUERY_1}")
-analyze_query_result "${QUERY_ONE_RESULT}" "${TMDB_QUERY_1}"
-QUERY_TWO_RESULT=$(search_results "${TMDB_QUERY_2}")
-analyze_query_result "${QUERY_TWO_RESULT}" "${TMDB_QUERY_2}"
+# Get credits for all seasons in a TV series
+# Series credits
+# curl -sS https://api.themoviedb.org/3/${1}/credits?api_key=${TMDB_AUTH} | jq -r '. | .cast? + .crew? | .[] | .name? + "> " + .title?'
+# Season IDs
+# curl -sS https://api.themoviedb.org/3/${1}?api_key=${TMDB_AUTH} | jq -r '.seasons | .[] | .season_number'
+# Season credits
+# curl -sS https://api.themoviedb.org/3/${1}/season/${SEASON}/credits?api_key=${TMDB_AUTH} | jq -r '.seasons | .[] | .season_number'
 
-get_credits "$(awk '{print $2"/"$1}' "${CINEBUDDIES_TMP_DIR}/$(ls -1 "${CINEBUDDIES_TMP_DIR}/" | head -1)")" \
-  > "${CINEBUDDIES_TMP_DIR}/one"
-get_credits "$(awk '{print $2"/"$1}' "${CINEBUDDIES_TMP_DIR}/$(ls -1 "${CINEBUDDIES_TMP_DIR}/" | grep -v one | tail -1)")" \
-  > "${CINEBUDDIES_TMP_DIR}/two"
+function build_entity_data() {
+  QUERY_RESULT=$(search_results "${1}")
+  analyze_query_result "${QUERY_RESULT}" "${1}"
+}
 
-comm -12 "${CINEBUDDIES_TMP_DIR}/one" "${CINEBUDDIES_TMP_DIR}/two"
+function stash_entity_data() {
+  ENTITY_FILE=$(ls -1 "${CINEBUDDIES_TMP_DIR}/" \
+    | grep -Ev '^[1-2]$' \
+    | sed -n "${FILE_ID}p")
+  get_credits "$(awk '{print $2"/"$1}' "${CINEBUDDIES_TMP_DIR}/${ENTITY_FILE}")" \
+    > "${CINEBUDDIES_TMP_DIR}/${FILE_ID}"
+}
+
+FILE_ID=1
+for i in $(seq 1 $QUERIES); do
+  QUERY_ID="TMDB_QUERY_$i"
+  build_entity_data "${!QUERY_ID}"
+  stash_entity_data
+  ((FILE_ID++))
+done
+
+if [[ $QUERIES == 2 ]]; then
+  comm -12 "${CINEBUDDIES_TMP_DIR}/1" "${CINEBUDDIES_TMP_DIR}/2"
+else
+  cat "${CINEBUDDIES_TMP_DIR}/1"
+fi
 
