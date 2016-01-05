@@ -4,13 +4,15 @@ set -a ; set -o errexit ; set -o nounset
 
 function usage() {
   cat <<EOF
-  Usage: ${0} "entity-1" ["entity-2"]
+  Usage: ${0} [OPTIONS] "entity-1" ["entity-2"]
   OPTIONS:
     -h        Show usage
     -t        Specify entity type (person, movie, tv)
 EOF
 exit
 }
+
+ENT_TYPE=''
 
 while getopts ":ht:" OPTION; do
   case $OPTION in
@@ -45,6 +47,11 @@ if [[ ! -z "${TMDB_QUERY_2}" ]]; then
   ((QUERIES++))
 fi
 
+if [[ ! ${ENT_TYPE} =~ ^(person|movie|tv)?$ ]]; then
+  >&2 echo "Type option must be one of movie, person, or tv"
+  exit
+fi
+
 TIMESTAMP=$(date -j -u "+%s")
 CINEBUDDIES_TMP_DIR="${TMPDIR}${TIMESTAMP}"
 mkdir -p "${CINEBUDDIES_TMP_DIR}"
@@ -61,33 +68,39 @@ function search_results() {
 function entity_select() {
   local SELECTION
   SELECTION=1
+  SELECT_LINES=$(wc -l <<< "$1")
 
-  while read -r line; do
-    if [[ $SELECTION == 1 ]]; then
-      echo
-      echo "0) exit"
-    fi
-    echo "$SELECTION) $line"
-    ((SELECTION++))
-  done <<< "$1"
-
-  ((SELECTION--))
-  opt=''
-  echo
-  while [[ ! `seq -s' ' 1 $SELECTION` =~ $opt ]]; do
-    printf 'Select an option from the above list: '
-    read -r opt
-    for id in `seq -s' ' 1 $SELECTION`; do
-      if [[ $opt == $id ]]; then
-	ENTITY_INFO=$(sed -n "${opt}p" <<< "$1")
-	echo "${ENTITY_INFO}" \
-	  > "${CINEBUDDIES_TMP_DIR}/$(hash_gen "${ENTITY_INFO}")"
-	break
-      elif [[ $opt == 0 ]]; then
-	exit
+  if [[ $SELECT_LINES -gt 1 ]]; then
+    while read -r line; do
+      if [[ $SELECTION == 1 ]]; then
+        echo
+        echo "0) exit"
       fi
+      echo "$SELECTION) $line"
+      ((SELECTION++))
+    done <<< "$1"
+
+    ((SELECTION--))
+    opt=''
+    echo
+    while [[ ! `seq -s' ' 1 $SELECTION` =~ $opt ]]; do
+      printf 'Select an option from the above list: '
+      read -r opt
+      for id in `seq -s' ' 1 $SELECTION`; do
+        if [[ $opt == $id ]]; then
+          ENTITY_INFO=$(sed -n "${opt}p" <<< "$1")
+          echo "${ENTITY_INFO}" \
+            > "${CINEBUDDIES_TMP_DIR}/$(hash_gen "${ENTITY_INFO}")"
+          break
+        elif [[ $opt == 0 ]]; then
+          exit
+        fi
+      done
     done
-  done
+  else
+    echo "${1}" \
+      > "${CINEBUDDIES_TMP_DIR}/$(hash_gen "${1}")"
+  fi
 }
 
 function total_results() {
@@ -96,7 +109,14 @@ function total_results() {
 
 function results_format() {
   jq -r '.results[] | "\(.id)> " + .media_type + "> " + .release_date + "> " + .title? + .name?' <<< "${1}" \
-    | column -t -s'>'
+    | column -t -s'>' \
+    | awk -v entity_type=$ENT_TYPE '{
+        if (entity_type == "") {
+          print
+        } else if ($2 == entity_type) {
+          print
+        }
+      }'
 }
 
 function analyze_query_result() {
@@ -122,7 +142,10 @@ function get_credits() {
   [[ $1 =~ ^person ]] && ENDPOINT='combined_credits' || ENDPOINT='credits'
   curl -m15 -sS "https://api.themoviedb.org/3/${1}/${ENDPOINT}?api_key=${TMDB_AUTH}" \
     | jq -r '. | .cast? + .crew? | .[] | .name? + "> " + .title?' \
-    | sed 's/> /\'$'\n/g' | sort | uniq | grep -Ev '^$'
+    | sed 's/> /\'$'\n/g' \
+    | sort \
+    | uniq \
+    | grep -Ev '^$'
 }
 
 # Get credits for all seasons in a TV series
