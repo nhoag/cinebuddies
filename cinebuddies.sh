@@ -2,6 +2,9 @@
 
 set -a ; set -o errexit ; set -o nounset
 
+# http://stackoverflow.com/questions/592620/check-if-a-program-exists-from-a-bash-script
+hash gdate 2>/dev/null || { echo >&2 "I require gdate but it's not installed. Aborting."; exit 1; }
+
 function usage() {
   cat <<EOF
   Usage: ${0} [OPTIONS] "entity-1" ["entity-2"]
@@ -52,14 +55,13 @@ if [[ ! ${ENT_TYPE} =~ ^(person|movie|tv)?$ ]]; then
   exit
 fi
 
-TIMESTAMP=$(date -j -u "+%s")
+function timestamp_create() {
+  gdate +%s%6N
+}
+
+TIMESTAMP=$(timestamp_create)
 CINEBUDDIES_TMP_DIR="${TMPDIR}${TIMESTAMP}"
 mkdir -p "${CINEBUDDIES_TMP_DIR}"
-
-function hash_gen() {
-  md5 -qs "${1}" \
-    | sed -E 's/[a-z0-9]{21}$//'
-}
 
 function search_results() {
   curl -sS "https://api.themoviedb.org/3/search/multi?api_key=${TMDB_AUTH}&query=${1}"
@@ -68,7 +70,8 @@ function search_results() {
 function entity_select() {
   local SELECTION
   SELECTION=1
-  SELECT_LINES=$(wc -l <<< "$1")
+  SELECT_LINES=$(wc -l <<< "$1" \
+    | sed 's/^ *//')
 
   if [[ $SELECT_LINES -gt 1 ]]; then
     while read -r line; do
@@ -90,7 +93,7 @@ function entity_select() {
         if [[ $opt == $id ]]; then
           ENTITY_INFO=$(sed -n "${opt}p" <<< "$1")
           echo "${ENTITY_INFO}" \
-            > "${CINEBUDDIES_TMP_DIR}/$(hash_gen "${ENTITY_INFO}")"
+            > "${CINEBUDDIES_TMP_DIR}/$(timestamp_create)"
           break
         elif [[ $opt == 0 ]]; then
           exit
@@ -99,7 +102,7 @@ function entity_select() {
     done
   else
     echo "${1}" \
-      > "${CINEBUDDIES_TMP_DIR}/$(hash_gen "${1}")"
+      > "${CINEBUDDIES_TMP_DIR}/$(timestamp_create)"
   fi
 }
 
@@ -134,7 +137,7 @@ function analyze_query_result() {
   else
     ENTITY_INFO=$(results_format "$1")
     echo "${ENTITY_INFO}" \
-      > "${CINEBUDDIES_TMP_DIR}/$(hash_gen "${ENTITY_INFO}")"
+      > "${CINEBUDDIES_TMP_DIR}/$(timestamp_create)"
   fi
 }
 
