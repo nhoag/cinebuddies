@@ -181,7 +181,12 @@ for i in $(seq 1 $QUERIES); do
 done
 
 if [[ $QUERIES == 2 ]]; then
-  comm -12 "${CINEBUDDIES_TMP_DIR}/1" "${CINEBUDDIES_TMP_DIR}/2"
+  COMMON_ENTITIES=$(comm -12 "${CINEBUDDIES_TMP_DIR}/1" "${CINEBUDDIES_TMP_DIR}/2")
+  if [[ ! -z $COMMON_ENTITIES ]]; then
+    echo "${COMMON_ENTITIES}"
+  else
+    echo "No commonalities found."
+  fi
 else
   cat "${CINEBUDDIES_TMP_DIR}/1"
 fi
